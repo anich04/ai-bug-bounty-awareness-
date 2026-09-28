@@ -1,0 +1,16 @@
+{
+  "id": "local-lab",
+  "name": "Local lab example - replace with your actual authorization",
+  "authorization_status": "ambiguous",
+  "authorization_source": "Template only; confirm ownership and lab rules before changing status",
+  "valid_until": "2026-12-31T23:59:59Z",
+  "scope": [
+    {"id": "lab", "effect": "include", "host": "localhost", "schemes": ["http"], "ports": [8080], "path_prefix": "/"},
+    {"id": "admin", "effect": "exclude", "host": "localhost", "path_prefix": "/admin"}
+  ],
+  "actions": [
+    {"action": "probe_http", "allowed": true, "requires_approval": true, "methods": ["HEAD", "GET"]},
+    {"action": "resolve_dns", "allowed": false, "requires_approval": true}
+  ],
+  "rate_limit": {"requests": 5, "window_seconds": 60}
+}
