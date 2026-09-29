@@ -14,10 +14,18 @@ from .logging import configure_logging, record_event
 from .policy import PolicyError, load_program
 from .programs import ProgramStore
 from .scope import ScopeGuard
+from .jobs import JobError, JobQueue, ROUTES, TRANSITIONS
+
+
+def job_result(job: dict | None) -> dict:
+    if job is None:
+        return {"ok": True, "status": "idle", "job": None, "execution_enabled": False}
+    return {"ok": job["status"] not in {"blocked", "failed", "rejected"},
+            "status": job["status"], "job": job, "execution_enabled": False}
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="abh", description="AI Bug Bounty Awareness - Phase 1")
+    parser = argparse.ArgumentParser(prog="abh", description="AI Bug Bounty Awareness - Phase 2")
     parser.add_argument("--version", action="version", version=__version__)
     parser.add_argument("--root", type=Path, default=Path.cwd(), help="Workspace containing .env and local data")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -41,6 +49,37 @@ def main(argv: list[str] | None = None) -> int:
     check.add_argument("--action", required=True)
     check.add_argument("--method", help="Explicit uppercase HTTP method when applicable")
     check.add_argument("--redirect", help="Evaluate an observed redirect Location after checking the source")
+    jobs = commands.add_parser("jobs", help="Persistent dry-run job orchestration")
+    job_commands = jobs.add_subparsers(dest="job_command", required=True)
+    create = job_commands.add_parser("create")
+    create.add_argument("target")
+    create.add_argument("--program", required=True)
+    create.add_argument("--action", required=True, choices=sorted(ROUTES))
+    create.add_argument("--method")
+    create.add_argument("--source", default="human")
+    create.add_argument("--max-attempts", type=int, default=3)
+    create.add_argument("--key", help="Optional idempotency key scoped to this program")
+    listing = job_commands.add_parser("list")
+    listing.add_argument("--status", choices=sorted(TRANSITIONS))
+    listing.add_argument("--owner", choices=sorted(set(ROUTES.values())))
+    for verb in ("show", "approve", "reject", "cancel"):
+        command = job_commands.add_parser(verb)
+        command.add_argument("job_id")
+        if verb != "show":
+            command.add_argument("--actor", default="local-human")
+    run = job_commands.add_parser("run-next", help="Simulate a routed job; never invokes tools or network")
+    run.add_argument("--owner", required=True, choices=sorted(set(ROUTES.values())))
+    run.add_argument("--worker", default="local-worker")
+    run.add_argument("--outcome", choices=("success", "transient_failure", "permanent_failure"), default="success")
+    job_commands.add_parser("recover", help="Recover expired worker leases")
+    job_commands.add_parser("routes", help="Show routing metadata; agent runtimes arrive in Phase 3")
+    stop = commands.add_parser("emergency-stop", help="Persistently stop new work and cancel active dry-run jobs")
+    stop.add_argument("--actor", default="local-human")
+    engine = commands.add_parser("orchestrator")
+    engine_commands = engine.add_subparsers(dest="engine_command", required=True)
+    engine_commands.add_parser("status")
+    resume = engine_commands.add_parser("resume", help="Explicitly resume admission; cancelled jobs remain cancelled")
+    resume.add_argument("--actor", default="local-human")
     args = parser.parse_args(argv)
     logger = None
     correlation_id = str(uuid4())
@@ -50,13 +89,15 @@ def main(argv: list[str] | None = None) -> int:
         logger = configure_logging(settings)
         if args.command == "init":
             database.initialize()
-            result = {"ok": True, "message": "Local database initialized", "phase": 1}
+            result = {"ok": True, "message": "Local database initialized", "phase": 2}
         elif args.command == "doctor":
             health = database.health()
             result = {"ok": health["ok"], "checks": {
                 "configuration": True, "log_file": True, "database": health,
                 "dry_run": settings.dry_run, "require_human_approval": settings.require_human_approval},
                 "execution_enabled": False}
+            if health["ok"]:
+                result["checks"]["orchestrator"] = JobQueue(database).status()
         elif args.command == "programs":
             store = ProgramStore(database)
             if args.program_command == "import":
@@ -76,18 +117,42 @@ def main(argv: list[str] | None = None) -> int:
                 result = guard.check_redirect(args.program, args.target, args.redirect, args.action, method=args.method, correlation_id=correlation_id)
             else:
                 result = guard.check(args.program, args.target, args.action, method=args.method, correlation_id=correlation_id)
+        elif args.command == "jobs":
+            queue = JobQueue(database)
+            if args.job_command == "create":
+                result = job_result(queue.create(args.program, args.target, args.action, method=args.method,
+                                    source_agent=args.source, max_attempts=args.max_attempts, idempotency_key=args.key))
+            elif args.job_command == "list":
+                result = {"ok": True, "jobs": queue.list(status=args.status, owner=args.owner)}
+            elif args.job_command == "show":
+                result = job_result(queue.show(args.job_id))
+            elif args.job_command in {"approve", "reject"}:
+                result = job_result(queue.review(args.job_id, approve=args.job_command == "approve", actor=args.actor))
+            elif args.job_command == "cancel":
+                result = job_result(queue.cancel(args.job_id, actor=args.actor))
+            elif args.job_command == "run-next":
+                result = job_result(queue.run_next(args.owner, args.worker, outcome=args.outcome))
+            elif args.job_command == "recover":
+                result = {"ok": True, "recovered_jobs": queue.recover()}
+            else:
+                result = {"ok": True, "routes": ROUTES, "agent_runtimes_implemented": False}
+        elif args.command == "emergency-stop":
+            result = {"ok": True, **JobQueue(database).emergency_stop(actor=args.actor)}
+        elif args.command == "orchestrator":
+            queue = JobQueue(database)
+            result = {"ok": True, **(queue.resume(actor=args.actor) if args.engine_command == "resume" else queue.status())}
         else:
             result = {"ok": True, "environment": settings.environment,
                       "dry_run": settings.dry_run, "require_human_approval": settings.require_human_approval,
-                      "database_backend": "sqlite", "log_level": settings.log_level, "phase": 1}
+                      "database_backend": "sqlite", "log_level": settings.log_level, "phase": 2}
         result["correlation_id"] = correlation_id
         record_event(logger, args.command, "ok" if result["ok"] else "failed", correlation_id)
         print(json.dumps(result, indent=2))
-        return 3 if result.get("status") == "WAITING_FOR_HUMAN_APPROVAL" else (0 if result["ok"] else 1)
-    except (ConfigError, DatabaseError, PolicyError, UnicodeError, OSError, sqlite3.Error) as error:
+        return 3 if result.get("status") in {"WAITING_FOR_HUMAN_APPROVAL", "waiting_human"} else (0 if result["ok"] else 1)
+    except (ConfigError, DatabaseError, PolicyError, JobError, UnicodeError, OSError, sqlite3.Error) as error:
         if logger:
             record_event(logger, args.command, "failed", correlation_id)
         # Raw exception strings may contain credentials or private paths.
-        reason = str(error) if isinstance(error, (ConfigError, DatabaseError, PolicyError)) else "Local storage or policy text unavailable; check paths, permissions, encoding and database integrity"
+        reason = str(error) if isinstance(error, (ConfigError, DatabaseError, PolicyError, JobError)) else "Local storage or policy text unavailable; check paths, permissions, encoding and database integrity"
         print(json.dumps({"ok": False, "error": reason, "correlation_id": correlation_id}), file=sys.stderr)
         return 1

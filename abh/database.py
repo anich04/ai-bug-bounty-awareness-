@@ -7,7 +7,7 @@ import sqlite3
 
 from .config import ConfigError, Settings
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 PHASE_ONE_SCHEMA = (
     "CREATE TABLE programs (id TEXT PRIMARY KEY, name TEXT NOT NULL, authorization_status TEXT NOT NULL, authorization_source TEXT NOT NULL, valid_until TEXT NOT NULL, revision TEXT NOT NULL)",
@@ -19,6 +19,37 @@ PHASE_ONE_SCHEMA = (
     "CREATE TABLE rate_events (id INTEGER PRIMARY KEY, program_id TEXT NOT NULL REFERENCES programs(id), at REAL NOT NULL)",
     "CREATE INDEX rate_events_program_time ON rate_events(program_id, at)",
     "CREATE TABLE audit_logs (id INTEGER PRIMARY KEY, at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, actor TEXT NOT NULL, event TEXT NOT NULL, program_id TEXT NOT NULL, revision TEXT NOT NULL, target_host TEXT, action TEXT, decision TEXT NOT NULL, reason TEXT NOT NULL, correlation_id TEXT NOT NULL)",
+)
+
+PHASE_TWO_SCHEMA = (
+    """CREATE TABLE jobs (
+        id TEXT PRIMARY KEY, program_id TEXT NOT NULL REFERENCES programs(id),
+        source_agent TEXT NOT NULL, owner TEXT NOT NULL, type TEXT NOT NULL,
+        target TEXT NOT NULL, method TEXT, policy_revision TEXT NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('waiting_human','queued','running','retry_wait','succeeded','failed','cancelled','blocked','rejected')),
+        reason TEXT NOT NULL, created_at REAL NOT NULL, updated_at REAL NOT NULL,
+        available_at REAL NOT NULL, attempts INTEGER NOT NULL DEFAULT 0,
+        max_attempts INTEGER NOT NULL CHECK(max_attempts BETWEEN 1 AND 5),
+        worker TEXT, lease_token TEXT, lease_until REAL, approval_revision TEXT,
+        idempotency_key TEXT, fingerprint TEXT NOT NULL, correlation_id TEXT NOT NULL,
+        result_json TEXT, UNIQUE(program_id, idempotency_key))""",
+    "CREATE INDEX jobs_dispatch ON jobs(owner,status,available_at,created_at)",
+    """CREATE TABLE job_events (
+        id INTEGER PRIMARY KEY, job_id TEXT NOT NULL REFERENCES jobs(id),
+        at REAL NOT NULL, actor TEXT NOT NULL, event TEXT NOT NULL,
+        from_status TEXT, to_status TEXT NOT NULL, reason TEXT NOT NULL,
+        attempt INTEGER NOT NULL, correlation_id TEXT NOT NULL)""",
+    """CREATE TABLE approvals (
+        id INTEGER PRIMARY KEY, job_id TEXT NOT NULL REFERENCES jobs(id),
+        policy_revision TEXT NOT NULL, decision TEXT NOT NULL CHECK(decision IN ('approved','rejected')),
+        actor TEXT NOT NULL, at REAL NOT NULL, correlation_id TEXT NOT NULL)""",
+    """CREATE TABLE engine_control (
+        id INTEGER PRIMARY KEY CHECK(id=1), stopped INTEGER NOT NULL CHECK(stopped IN (0,1)),
+        concurrency_limit INTEGER NOT NULL CHECK(concurrency_limit > 0), last_seen REAL NOT NULL)""",
+    "INSERT INTO engine_control VALUES (1,0,2,0)",
+    """CREATE TABLE engine_events (
+        id INTEGER PRIMARY KEY, at REAL NOT NULL, actor TEXT NOT NULL,
+        event TEXT NOT NULL, correlation_id TEXT NOT NULL)""",
 )
 
 
@@ -61,7 +92,7 @@ class SQLiteDatabase:
             connection.execute("PRAGMA foreign_keys = ON")
             connection.execute("BEGIN IMMEDIATE")
             version = connection.execute("PRAGMA user_version").fetchone()[0]
-            if version not in {0, 1, SCHEMA_VERSION}:
+            if version not in {0, 1, 2, SCHEMA_VERSION}:
                 raise DatabaseError("Unsupported database schema version")
             if version == 0:
                 tables = connection.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").fetchall()
@@ -78,6 +109,12 @@ class SQLiteDatabase:
                     connection.execute(statement)
                 connection.execute("INSERT INTO schema_migrations(version, applied_at) VALUES (2, CURRENT_TIMESTAMP)")
                 connection.execute("PRAGMA user_version = 2")
+                version = 2
+            if version == 2:
+                for statement in PHASE_TWO_SCHEMA:
+                    connection.execute(statement)
+                connection.execute("INSERT INTO schema_migrations(version, applied_at) VALUES (3, CURRENT_TIMESTAMP)")
+                connection.execute("PRAGMA user_version = 3")
             connection.commit()
         except Exception:
             connection.rollback()
@@ -90,10 +127,12 @@ class SQLiteDatabase:
         versions = connection.execute("SELECT version FROM schema_migrations ORDER BY version").fetchall()
         if [row[0] for row in versions] != list(range(1, expected + 1)) or connection.execute("PRAGMA user_version").fetchone()[0] != expected:
             raise DatabaseError("Database migration history is inconsistent")
-        if expected == 2:
+        if expected >= 2:
             tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
             if not {"programs", "policy_revisions", "scope_rules", "action_policies", "rate_limits", "rate_state", "rate_events", "audit_logs"} <= tables:
                 raise DatabaseError("Database schema is incomplete")
+            if expected >= 3 and not {"jobs", "job_events", "approvals", "engine_control", "engine_events"} <= tables:
+                raise DatabaseError("Database job schema is incomplete")
 
     def health(self) -> dict:
         if not self.path.is_file():
