@@ -1,6 +1,6 @@
 # AI Bug Bounty Awareness
 
-Phase 4 of an authorized security workflow engine. Assets, endpoints, observations, candidate findings, evidence and draft reports now persist with provenance and SHA-256 hashes. The five offline agents and approval-gated job system remain available. No targets are contacted, security tools run, reports submitted or AI providers called.
+Phase 5 of an authorized security workflow engine. Controlled DNS and HTTP header adapters now use the approval-gated queue, deterministic command plans and bounded supplied-capture parsing. Tool runs preserve artifact hashes and provenance. Development remains dry-run only: no targets are contacted, commands executed, reports submitted or AI providers called.
 
 ## Run locally
 
@@ -42,7 +42,7 @@ python -m abh --root /path/to/workspace init
 python -m abh --root /path/to/workspace doctor
 ```
 
-`init` preserves an existing recognized database and upgrades schema versions 1 through 4 to version 5 transactionally. Unknown schemas are rejected. `doctor` returns exit status 1 for failed checks and never initializes a missing database. It writes a health event to the local log. CLI output is JSON; errors go to stderr. Exit status 0 means success, 1 means blocked/error, 2 means malformed CLI usage, and 3 means waiting for human approval.
+`init` preserves an existing recognized database and upgrades schema versions 1 through 5 to version 6 transactionally. Unknown schemas are rejected. `doctor` returns exit status 1 for failed checks and never initializes a missing database. It writes a health event to the local log. CLI output is JSON; errors go to stderr. Exit status 0 means success, 1 means blocked/error, 2 means malformed CLI usage, and 3 means waiting for human approval.
 
 ## Check a local policy
 
@@ -103,4 +103,8 @@ See [architecture](docs/architecture.md), [configuration](docs/configuration.md)
 
 Use `python -m abh data --help` to import, list, inspect, trace and export local objects. See [the data and evidence guide](docs/data-evidence.md) for payload examples and the workflow. Original evidence bytes are stored atomically in the ignored local SQLite database, with a 10 MiB limit per artifact. Findings remain unvalidated candidates and reports remain drafts.
 
-Phase 4 is complete. Phase 5, controlled Kali tool adapters, requires the next phase authorization.
+## Controlled Kali adapters
+
+Use `python -m abh tools list` to inspect the initial adapters and [the tool-layer guide](docs/kali-tools.md) for enqueue, approval, dry-run processing and artifact export. This phase supports DNS A lookup plans and HTTP HEAD plans. Optional supplied captures are parsed offline and explicitly marked unverified.
+
+Phase 5's development tool layer is complete. Actual execution inside the Kali VM is NOT VERIFIED and is disabled. Phase 6, Burp integration, requires the next phase authorization.

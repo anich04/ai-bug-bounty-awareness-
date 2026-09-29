@@ -1,4 +1,4 @@
-# Phase 3 architecture
+# Phase 5 architecture
 
 ```mermaid
 flowchart LR
@@ -29,6 +29,12 @@ flowchart LR
     Runs --> SQLite
     Runs --> Handoffs[Structured handoff requests]
     Handoffs --> Queue
+    CLI --> Data[Immutable data objects and evidence]
+    Data --> SQLite
+    Queue --> Tools[Fixed dry-run Kali adapters]
+    Tools --> Captures[Bounded supplied-capture parsers]
+    Captures --> ToolRuns[Tool runs and artifact hashes]
+    ToolRuns --> SQLite
 ```
 
 `abh/config.py` loads validated immutable settings. `abh/cli.py` owns command dispatch and correlation IDs. `abh/logging.py` emits only fixed event fields; it does not serialize configuration, exception text, prompts or arbitrary messages. Logs rotate at 1 MB with three backups.
@@ -46,3 +52,8 @@ Create/review/claim/finish/cancel operations are transactional. A claim rechecks
 Phase 3 adds `abh/agent_contracts.py` (registry and schema validation), `abh/agents.py` (base agent protocol and five offline handlers), and `abh/agent_runtime.py` (dispatch, result validation and handoff orchestration). Schema 4 stores immutable-by-API `agent_inputs`, per-attempt `agent_runs` and `agent_handoffs`. A claim records its run atomically. Finishing a run, storing its output hash and completing its job happen in one transaction after rechecking lease and policy. Generic simulation workers cannot consume agent jobs.
 
 Inputs are stored with the original job before approval and included in the enqueue fingerprint. Handoffs preserve the parent program, target and correlation ID, require a completed agent result, enforce the allowed next-agent route and create a new job that requires approval. An idempotency key and unique parent/destination constraint prevent duplicate children. Historical legacy jobs and their fingerprints remain compatible.
+
+
+Phase 4 adds immutable-by-API data objects and content-addressed artifact BLOBs in schema 5. Provenance links preserve program, target, policy revision and parent relationships; reports reference evidence from the same candidate finding. Imports are not validation decisions.
+
+Phase 5 adds `tool_inputs`, `tool_runs` and `tool_artifacts` in schema 6. `abh/tool_adapters.py` provides fixed command plans and bounded DNS/HTTP capture parsers. `abh/tool_runtime.py` publishes dry-run results and original supplied bytes transactionally. `abh/tool_cli.py` exposes local commands. Input hashes and queue fingerprints bind captures before approval. Tool, agent and legacy worker modes are disjoint. Shared queue checks enforce current policy, approval, budgets, concurrency, leases, cancellation and emergency stop. There is no subprocess or VM transport implementation; command plans are inspectable data, not execution permits.

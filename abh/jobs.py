@@ -97,6 +97,9 @@ class JobQueue:
         # Column names are internal and allowlisted above; values are always bound.
         connection.execute("UPDATE jobs SET " + ",".join(key + "=?" for key in updates) + " WHERE id=?",
                            (*updates.values(), row["id"]))
+        if row["status"] == "running" and status != "running":
+            connection.execute("UPDATE tool_runs SET status=?,reason=?,ended_at=? WHERE job_id=? AND attempt=? AND status='running'",
+                               (status, reason, now, row["id"], row["attempts"]))
         updated = self._row(connection, row["id"])
         self._event(connection, updated, now, actor, "transition", row["status"], reason)
         if row["status"] == "running" and status != "running":
@@ -129,7 +132,7 @@ class JobQueue:
     def create(self, program_id: str, target: str, action: str, *, method: str | None = None,
                source_agent: str = "human", max_attempts: int = 3,
                idempotency_key: str | None = None, agent_input: dict | None = None,
-               parent_job_id: str | None = None) -> dict:
+               parent_job_id: str | None = None, tool_input: dict | None = None) -> dict:
         check(action in ROUTES, "Unknown job type; no route exists")
         check(source_agent in AGENTS, "Unknown source agent")
         check(type(max_attempts) is int and 1 <= max_attempts <= 5, "max_attempts must be between 1 and 5")
@@ -138,6 +141,11 @@ class JobQueue:
         # Phase 1 display strips queries. Do not silently turn a requested job into a different request.
         check("?" not in target, "Query-bearing jobs are not supported in this phase")
         normalized = normalize_target(target).display
+        tool_document = None
+        if tool_input is not None:
+            from .tool_adapters import validate_input
+            check(agent_input is None and parent_job_id is None, "Tool jobs cannot contain agent inputs or handoffs")
+            tool_document = validate_input(action, normalized, method, tool_input)
         input_document = None
         if agent_input is not None:
             from .agent_contracts import charter, validate_input
@@ -150,6 +158,8 @@ class JobQueue:
         fingerprint_fields = [program_id, normalized, action, method, source_agent, max_attempts]
         if input_document is not None:
             fingerprint_fields.append(input_document)
+        if tool_document is not None:
+            fingerprint_fields.append(["tool-v1", tool_document])
         fingerprint = hashlib.sha256(json.dumps(fingerprint_fields, separators=(",", ":")).encode()).hexdigest()
         with self.database.transaction(write=True) as connection:
             now = self._now(connection)
@@ -184,6 +194,8 @@ class JobQueue:
             if input_document is not None:
                 input_sha = hashlib.sha256(input_document.encode()).hexdigest()
                 connection.execute("INSERT INTO agent_inputs VALUES (?,?,?,?,?)", (job_id, ROUTES[action], 1, input_document, input_sha))
+            if tool_document is not None:
+                connection.execute("INSERT INTO tool_inputs VALUES (?,?,?)", (job_id, tool_document, hashlib.sha256(tool_document.encode()).hexdigest()))
             if parent is not None:
                 connection.execute("UPDATE jobs SET correlation_id=? WHERE id=?", (parent["correlation_id"], job_id))
                 connection.execute("INSERT INTO agent_handoffs VALUES (?,?,?,?,?,?)", (parent_job_id, job_id, source_agent, ROUTES[action], now, parent["correlation_id"]))
@@ -226,7 +238,8 @@ class JobQueue:
             now = self._now(connection)
             return self._recover(connection, now)
 
-    def claim(self, owner: str, worker: str, *, lease_seconds: int = 30, agent_mode: bool = False) -> dict | None:
+    def claim(self, owner: str, worker: str, *, lease_seconds: int = 30, agent_mode: bool = False, tool_mode: bool = False) -> dict | None:
+        check(not (agent_mode and tool_mode), "Worker modes are exclusive")
         check(owner in set(ROUTES.values()), "No worker route exists for that owner")
         identifier(worker)
         check(type(lease_seconds) is int and 5 <= lease_seconds <= 3600, "Lease must be between 5 and 3600 seconds")
@@ -238,7 +251,7 @@ class JobQueue:
             limit = connection.execute("SELECT concurrency_limit FROM engine_control WHERE id=1").fetchone()[0]
             if running >= limit:
                 return None
-            candidates = connection.execute("SELECT * FROM jobs WHERE owner=? AND status IN ('queued','retry_wait') AND available_at<=? AND EXISTS(SELECT 1 FROM agent_inputs WHERE job_id=jobs.id)=? ORDER BY created_at,id", (owner, now, int(agent_mode))).fetchall()
+            candidates = connection.execute("SELECT * FROM jobs WHERE owner=? AND status IN ('queued','retry_wait') AND available_at<=? AND EXISTS(SELECT 1 FROM agent_inputs WHERE job_id=jobs.id)=? AND EXISTS(SELECT 1 FROM tool_inputs WHERE job_id=jobs.id)=? ORDER BY created_at,id", (owner, now, int(agent_mode), int(tool_mode))).fetchall()
             for row in candidates:
                 program, reason = self._current(connection, row, now)
                 if reason is None and row["approval_revision"] != row["policy_revision"]:
@@ -260,6 +273,9 @@ class JobQueue:
                 claimed = self._move(connection, row, "running", "dry_run_claimed", now, worker,
                                      attempts=row["attempts"] + 1, worker=worker, lease_token=uuid4().hex,
                                      lease_until=now + lease_seconds)
+                if tool_mode:
+                    connection.execute("INSERT INTO tool_runs(id,job_id,attempt,status,reason,started_at) VALUES (?,?,?,?,?,?)",
+                                       ("T-" + uuid4().hex, row["id"], claimed["attempts"], "running", "tool_claimed", now))
                 if agent_mode:
                     item = connection.execute("SELECT * FROM agent_inputs WHERE job_id=?", (row["id"],)).fetchone()
                     connection.execute("INSERT INTO agent_runs(id,job_id,attempt,agent,worker,input_sha,status,reason,started_at) VALUES (?,?,?,?,?,?,?,?,?)",
@@ -297,6 +313,8 @@ class JobQueue:
             self._owned(row, worker, token, now)
             check(connection.execute("SELECT 1 FROM agent_inputs WHERE job_id=?", (job_id,)).fetchone() is None,
                   "Agent jobs must publish through AgentRuntime")
+            check(connection.execute("SELECT 1 FROM tool_inputs WHERE job_id=?", (job_id,)).fetchone() is None,
+                  "Tool jobs must publish through ToolRuntime")
             _, reason = self._current(connection, row, now)
             if reason:
                 return self._public(self._move(connection, row, "blocked", reason, now, worker))
@@ -365,6 +383,10 @@ class JobQueue:
                 check(hashlib.sha256(agent_input["document_json"].encode()).hexdigest() == agent_input["input_sha"], "Agent input hash mismatch")
                 result["agent_input"] = {"agent": agent_input["agent"], "input_sha": agent_input["input_sha"],
                                          "payload": json.loads(agent_input["document_json"])}
+            tool_input = connection.execute("SELECT * FROM tool_inputs WHERE job_id=?", (job_id,)).fetchone()
+            if tool_input is not None:
+                check(hashlib.sha256(tool_input["document_json"].encode()).hexdigest() == tool_input["input_sha"], "Tool input hash mismatch")
+                result["tool_input"] = json.loads(tool_input["document_json"])
             result["events"] = [dict(row) for row in connection.execute("SELECT * FROM job_events WHERE job_id=? ORDER BY id", (job_id,))]
             result["approvals"] = [dict(row) for row in connection.execute("SELECT * FROM approvals WHERE job_id=? ORDER BY id", (job_id,))]
             return result
