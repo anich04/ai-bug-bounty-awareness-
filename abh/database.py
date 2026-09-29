@@ -7,7 +7,7 @@ import sqlite3
 
 from .config import ConfigError, Settings
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 PHASE_ONE_SCHEMA = (
     "CREATE TABLE programs (id TEXT PRIMARY KEY, name TEXT NOT NULL, authorization_status TEXT NOT NULL, authorization_source TEXT NOT NULL, valid_until TEXT NOT NULL, revision TEXT NOT NULL)",
@@ -70,6 +70,24 @@ PHASE_THREE_SCHEMA = (
 )
 
 
+PHASE_FOUR_SCHEMA = (
+    """CREATE TABLE data_objects (
+        id TEXT PRIMARY KEY, program_id TEXT NOT NULL REFERENCES programs(id),
+        kind TEXT NOT NULL CHECK(kind IN ('asset','endpoint','observation','finding','evidence','report')),
+        parent_id TEXT REFERENCES data_objects(id), policy_revision TEXT NOT NULL,
+        document_json TEXT NOT NULL, document_sha TEXT NOT NULL,
+        created_at TEXT NOT NULL, FOREIGN KEY(program_id,policy_revision) REFERENCES policy_revisions(program_id,revision))""",
+    "CREATE INDEX data_objects_program_kind ON data_objects(program_id,kind)",
+    """CREATE TABLE artifacts (
+        sha256 TEXT PRIMARY KEY, content BLOB NOT NULL, size INTEGER NOT NULL CHECK(size >= 0))""",
+    """CREATE TABLE evidence_artifacts (
+        evidence_id TEXT PRIMARY KEY REFERENCES data_objects(id),
+        sha256 TEXT NOT NULL REFERENCES artifacts(sha256))""",
+    """CREATE TABLE report_evidence (
+        report_id TEXT NOT NULL REFERENCES data_objects(id),
+        evidence_id TEXT NOT NULL REFERENCES data_objects(id), PRIMARY KEY(report_id,evidence_id))""",
+)
+
 class DatabaseError(RuntimeError):
     pass
 
@@ -109,7 +127,7 @@ class SQLiteDatabase:
             connection.execute("PRAGMA foreign_keys = ON")
             connection.execute("BEGIN IMMEDIATE")
             version = connection.execute("PRAGMA user_version").fetchone()[0]
-            if version not in {0, 1, 2, 3, SCHEMA_VERSION}:
+            if version not in {0, 1, 2, 3, 4, SCHEMA_VERSION}:
                 raise DatabaseError("Unsupported database schema version")
             if version == 0:
                 tables = connection.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").fetchall()
@@ -138,6 +156,12 @@ class SQLiteDatabase:
                     connection.execute(statement)
                 connection.execute("INSERT INTO schema_migrations(version, applied_at) VALUES (4, CURRENT_TIMESTAMP)")
                 connection.execute("PRAGMA user_version = 4")
+                version = 4
+            if version == 4:
+                for statement in PHASE_FOUR_SCHEMA:
+                    connection.execute(statement)
+                connection.execute("INSERT INTO schema_migrations(version, applied_at) VALUES (5, CURRENT_TIMESTAMP)")
+                connection.execute("PRAGMA user_version = 5")
             connection.commit()
         except Exception:
             connection.rollback()
@@ -158,6 +182,8 @@ class SQLiteDatabase:
                 raise DatabaseError("Database job schema is incomplete")
             if expected >= 4 and not {"agent_inputs", "agent_runs", "agent_handoffs"} <= tables:
                 raise DatabaseError("Database agent schema is incomplete")
+            if expected >= 5 and not {"data_objects", "artifacts", "evidence_artifacts", "report_evidence"} <= tables:
+                raise DatabaseError("Database evidence schema is incomplete")
 
     def health(self) -> dict:
         if not self.path.is_file():

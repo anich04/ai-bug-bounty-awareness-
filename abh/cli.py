@@ -8,6 +8,8 @@ import sys
 from uuid import uuid4
 
 from . import __version__
+from .data import DataError
+from .data_cli import register as register_data, dispatch as dispatch_data
 from .config import ConfigError, Settings
 from .database import DatabaseError, create_database
 from .logging import configure_logging, record_event
@@ -27,7 +29,7 @@ def job_result(job: dict | None) -> dict:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="abh", description="AI Bug Bounty Awareness - Phase 3")
+    parser = argparse.ArgumentParser(prog="abh", description="AI Bug Bounty Awareness - Phase 4")
     parser.add_argument("--version", action="version", version=__version__)
     parser.add_argument("--root", type=Path, default=Path.cwd(), help="Workspace containing .env and local data")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -104,6 +106,7 @@ def main(argv: list[str] | None = None) -> int:
     engine_commands.add_parser("status")
     resume = engine_commands.add_parser("resume", help="Explicitly resume admission; cancelled jobs remain cancelled")
     resume.add_argument("--actor", default="local-human")
+    register_data(commands)
     args = parser.parse_args(argv)
     logger = None
     correlation_id = str(uuid4())
@@ -113,7 +116,7 @@ def main(argv: list[str] | None = None) -> int:
         logger = configure_logging(settings)
         if args.command == "init":
             database.initialize()
-            result = {"ok": True, "message": "Local database initialized", "phase": 3}
+            result = {"ok": True, "message": "Local database initialized", "phase": 4}
         elif args.command == "doctor":
             health = database.health()
             result = {"ok": health["ok"], "checks": {
@@ -122,6 +125,8 @@ def main(argv: list[str] | None = None) -> int:
                 "execution_enabled": False}
             if health["ok"]:
                 result["checks"]["orchestrator"] = JobQueue(database).status()
+        elif args.command == "data":
+            result = dispatch_data(args, database)
         elif args.command == "programs":
             store = ProgramStore(database)
             if args.program_command == "import":
@@ -187,15 +192,15 @@ def main(argv: list[str] | None = None) -> int:
         else:
             result = {"ok": True, "environment": settings.environment,
                       "dry_run": settings.dry_run, "require_human_approval": settings.require_human_approval,
-                      "database_backend": "sqlite", "log_level": settings.log_level, "phase": 3}
+                      "database_backend": "sqlite", "log_level": settings.log_level, "phase": 4}
         result["correlation_id"] = correlation_id
         record_event(logger, args.command, "ok" if result["ok"] else "failed", correlation_id)
         print(json.dumps(result, indent=2))
         return 3 if result.get("status") in {"WAITING_FOR_HUMAN_APPROVAL", "waiting_human"} else (0 if result["ok"] else 1)
-    except (ConfigError, DatabaseError, PolicyError, JobError, ContractError, UnicodeError, OSError, sqlite3.Error) as error:
+    except (ConfigError, DatabaseError, PolicyError, JobError, ContractError, DataError, UnicodeError, OSError, sqlite3.Error) as error:
         if logger:
             record_event(logger, args.command, "failed", correlation_id)
         # Raw exception strings may contain credentials or private paths.
-        reason = str(error) if isinstance(error, (ConfigError, DatabaseError, PolicyError, JobError, ContractError)) else "Local storage or policy text unavailable; check paths, permissions, encoding and database integrity"
+        reason = str(error) if isinstance(error, (ConfigError, DatabaseError, PolicyError, JobError, ContractError, DataError)) else "Local storage or policy text unavailable; check paths, permissions, encoding and database integrity"
         print(json.dumps({"ok": False, "error": reason, "correlation_id": correlation_id}), file=sys.stderr)
         return 1

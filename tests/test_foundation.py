@@ -80,7 +80,7 @@ class FoundationTests(unittest.TestCase):
         self.assertTrue(database.health()["ok"])
         connection = sqlite3.connect(self.root / "data/abh.db")
         try:
-            self.assertEqual(connection.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0], 4)
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0], 5)
         finally:
             connection.close()
         status, result = self.cli("doctor")
