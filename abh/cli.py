@@ -15,6 +15,8 @@ from .policy import PolicyError, load_program
 from .programs import ProgramStore
 from .scope import ScopeGuard
 from .jobs import JobError, JobQueue, ROUTES, TRANSITIONS
+from .agent_contracts import ContractError, REGISTRY, charter, load_input
+from .agent_runtime import AgentRuntime
 
 
 def job_result(job: dict | None) -> dict:
@@ -25,7 +27,7 @@ def job_result(job: dict | None) -> dict:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="abh", description="AI Bug Bounty Awareness - Phase 2")
+    parser = argparse.ArgumentParser(prog="abh", description="AI Bug Bounty Awareness - Phase 3")
     parser.add_argument("--version", action="version", version=__version__)
     parser.add_argument("--root", type=Path, default=Path.cwd(), help="Workspace containing .env and local data")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -72,7 +74,29 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--worker", default="local-worker")
     run.add_argument("--outcome", choices=("success", "transient_failure", "permanent_failure"), default="success")
     job_commands.add_parser("recover", help="Recover expired worker leases")
-    job_commands.add_parser("routes", help="Show routing metadata; agent runtimes arrive in Phase 3")
+    job_commands.add_parser("routes", help="Show job routing metadata")
+    agents = commands.add_parser("agents", help="Built-in offline agent framework")
+    agent_commands = agents.add_subparsers(dest="agent_command", required=True)
+    agent_commands.add_parser("list")
+    describe = agent_commands.add_parser("show")
+    describe.add_argument("agent", choices=sorted(REGISTRY))
+    enqueue = agent_commands.add_parser("enqueue")
+    enqueue.add_argument("agent", choices=sorted(REGISTRY))
+    enqueue.add_argument("target")
+    enqueue.add_argument("--program", required=True)
+    enqueue.add_argument("--input", type=Path, required=True)
+    enqueue.add_argument("--key")
+    execute = agent_commands.add_parser("run-next")
+    execute.add_argument("agent", choices=sorted(REGISTRY))
+    execute.add_argument("--worker", default="local-agent-worker")
+    handoff = agent_commands.add_parser("handoff")
+    handoff.add_argument("job_id")
+    handoff.add_argument("--to", required=True, choices=sorted(REGISTRY))
+    handoff.add_argument("--input", type=Path, required=True)
+    runs = agent_commands.add_parser("runs")
+    runs.add_argument("--job")
+    run_details = agent_commands.add_parser("run-show")
+    run_details.add_argument("run_id")
     stop = commands.add_parser("emergency-stop", help="Persistently stop new work and cancel active dry-run jobs")
     stop.add_argument("--actor", default="local-human")
     engine = commands.add_parser("orchestrator")
@@ -89,7 +113,7 @@ def main(argv: list[str] | None = None) -> int:
         logger = configure_logging(settings)
         if args.command == "init":
             database.initialize()
-            result = {"ok": True, "message": "Local database initialized", "phase": 2}
+            result = {"ok": True, "message": "Local database initialized", "phase": 3}
         elif args.command == "doctor":
             health = database.health()
             result = {"ok": health["ok"], "checks": {
@@ -135,7 +159,26 @@ def main(argv: list[str] | None = None) -> int:
             elif args.job_command == "recover":
                 result = {"ok": True, "recovered_jobs": queue.recover()}
             else:
-                result = {"ok": True, "routes": ROUTES, "agent_runtimes_implemented": False}
+                result = {"ok": True, "routes": ROUTES, "implemented_offline_agents": sorted(REGISTRY)}
+        elif args.command == "agents":
+            runtime = AgentRuntime(JobQueue(database))
+            if args.agent_command == "list":
+                result = {"ok": True, "agents": [definition.describe() for definition in REGISTRY.values()],
+                          "deferred_agents": ["tester", "evidence", "monitor"], "execution_enabled": False}
+            elif args.agent_command == "show":
+                result = {"ok": True, "agent": charter(args.agent).describe()}
+            elif args.agent_command in {"enqueue", "handoff"}:
+                owner = args.agent if args.agent_command == "enqueue" else args.to
+                with args.input.open(encoding="utf-8-sig") as source:
+                    payload = load_input(owner, source.read(131073))
+                result = job_result(runtime.enqueue(owner, args.program, args.target, payload, idempotency_key=args.key)
+                                    if args.agent_command == "enqueue" else runtime.handoff(args.job_id, owner, payload))
+            elif args.agent_command == "run-next":
+                result = job_result(runtime.run_next(args.agent, args.worker))
+            elif args.agent_command == "runs":
+                result = {"ok": True, "runs": runtime.runs(job_id=args.job)}
+            else:
+                result = {"ok": True, "run": runtime.show_run(args.run_id)}
         elif args.command == "emergency-stop":
             result = {"ok": True, **JobQueue(database).emergency_stop(actor=args.actor)}
         elif args.command == "orchestrator":
@@ -144,15 +187,15 @@ def main(argv: list[str] | None = None) -> int:
         else:
             result = {"ok": True, "environment": settings.environment,
                       "dry_run": settings.dry_run, "require_human_approval": settings.require_human_approval,
-                      "database_backend": "sqlite", "log_level": settings.log_level, "phase": 2}
+                      "database_backend": "sqlite", "log_level": settings.log_level, "phase": 3}
         result["correlation_id"] = correlation_id
         record_event(logger, args.command, "ok" if result["ok"] else "failed", correlation_id)
         print(json.dumps(result, indent=2))
         return 3 if result.get("status") in {"WAITING_FOR_HUMAN_APPROVAL", "waiting_human"} else (0 if result["ok"] else 1)
-    except (ConfigError, DatabaseError, PolicyError, JobError, UnicodeError, OSError, sqlite3.Error) as error:
+    except (ConfigError, DatabaseError, PolicyError, JobError, ContractError, UnicodeError, OSError, sqlite3.Error) as error:
         if logger:
             record_event(logger, args.command, "failed", correlation_id)
         # Raw exception strings may contain credentials or private paths.
-        reason = str(error) if isinstance(error, (ConfigError, DatabaseError, PolicyError, JobError)) else "Local storage or policy text unavailable; check paths, permissions, encoding and database integrity"
+        reason = str(error) if isinstance(error, (ConfigError, DatabaseError, PolicyError, JobError, ContractError)) else "Local storage or policy text unavailable; check paths, permissions, encoding and database integrity"
         print(json.dumps({"ok": False, "error": reason, "correlation_id": correlation_id}), file=sys.stderr)
         return 1

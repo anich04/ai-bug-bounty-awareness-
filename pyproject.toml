@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ai-bug-bounty-awareness"
-version = "0.3.0"
-description = "Authorized security workflow engine - Phase 2 dry-run orchestration"
+version = "0.4.0"
+description = "Authorized security workflow engine - Phase 3 offline agent framework"
 requires-python = ">=3.11"
 dependencies = []
 

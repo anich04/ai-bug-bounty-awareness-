@@ -328,9 +328,9 @@ class JobTests(unittest.TestCase):
     def test_v2_to_v3_migration_preserves_policies_and_usage(self):
         with self.database.transaction(write=True) as connection:
             connection.execute("INSERT INTO rate_events(program_id,at) VALUES (?,?)", (self.program.id, NOW))
-            for table in ("approvals", "job_events", "jobs", "engine_control", "engine_events"):
+            for table in ("agent_handoffs", "agent_runs", "agent_inputs", "approvals", "job_events", "jobs", "engine_control", "engine_events"):
                 connection.execute("DROP TABLE " + table)
-            connection.execute("DELETE FROM schema_migrations WHERE version=3")
+            connection.execute("DELETE FROM schema_migrations WHERE version>=3")
             connection.execute("PRAGMA user_version=2")
         self.database.initialize()
         self.assertEqual(self.store.get(self.program.id), self.program)

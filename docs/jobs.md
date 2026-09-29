@@ -1,6 +1,6 @@
 # Jobs and dry-run orchestration
 
-Phase 2 provides persistent queue mechanics. It does not include the agent framework, tool runners, network calls, model calls or report submission. Every result is labelled `dry_run_simulation` with `tool_executed=false` and `network_requests=0`.
+The persistent queue provides dry-run orchestration. Legacy simulation jobs return `dry_run_simulation`; Phase 3 agent jobs return `offline_agent_result` and use a separate dispatcher. Both report `tool_executed=false` and `network_requests=0`. Tool runners, network calls, model calls and report submission remain unimplemented.
 
 ## State machine
 
@@ -34,7 +34,7 @@ stateDiagram-v2
 | `jobs create TARGET --program ID --action ACTION --method HEAD` | Normalize inputs, pin current policy and create a waiting or blocked job |
 | `jobs create ... --key REQUEST_ID` | Reuse the exact original request; conflicting reuse errors |
 | `jobs list --status queued --owner mapper` | Filter persisted jobs |
-| `jobs show JOB_ID` | Show inputs, status, event history and approval records; omit lease token |
+| `jobs show JOB_ID` | Show inputs (including any stored agent contract), status, event history and approval records; omit lease token |
 | `jobs approve JOB_ID` | Recheck policy and approve this dry-run job only |
 | `jobs reject JOB_ID` | Record rejection |
 | `jobs cancel JOB_ID` | Cancel any nonterminal job and invalidate its lease |
@@ -53,7 +53,7 @@ Exit code 3 means waiting for human approval; 1 means blocked, failed, rejected 
 
 ## Ownership and retries
 
-Routing is fixed by action, not chosen by an LLM. Mapper owns asset discovery/DNS/HTTP probes; crawler owns URL/JavaScript collection; validator owns candidate validation and response comparison; evidence owns artifact tasks; reporter owns report-submission simulations; tester owns analysis and sensitive-test simulations. These names are metadata only until Phase 3.
+Routing is fixed by action, not chosen by an LLM. Mapper owns asset discovery/DNS/HTTP probes; crawler owns URL/JavaScript collection; validator owns candidate validation and response comparison; evidence owns artifact tasks; reporter owns report-submission simulations; tester owns analysis and sensitive-test simulations. Phase 3 adds `review_policy` for Scout and `draft_report` for Reporter, and provides five offline handlers documented in [agents](agents.md). Tester, Evidence and Monitor have no agent runtime yet.
 
 Queue claims run under an immediate SQLite transaction. Global running-job capacity is two across all owners and workers sharing the same database. Claims use FIFO order by creation timestamp and job ID; rate-limited jobs do not block ready jobs from another program. Rate deferral preserves attempts and leaves the job queued or waiting for retry.
 

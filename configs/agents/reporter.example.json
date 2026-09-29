@@ -1,0 +1,1 @@
+{"version": 1, "data": {"questions": [{"id": "reproduction", "label": "Steps to reproduce", "required": true}, {"id": "impact", "label": "What is the security impact?", "required": true}]}}

@@ -1,6 +1,6 @@
 # AI Bug Bounty Awareness
 
-Phase 2 of an authorized security workflow engine. This release includes persistent jobs, fixed agent routing, human approval, worker leases, retries, cancellation and emergency stop, built on the scope/policy engine. Job execution is a dry-run simulation: no targets are tested and no security tools run.
+Phase 3 of an authorized security workflow engine. Five built-in offline agents now run through the persistent job system: Scout, Mapper, Crawler, Validator and Reporter. They process supplied data under versioned contracts with recorded runs and approval-gated handoffs. No targets are contacted, no security tools run and no AI provider is called yet.
 
 ## Run locally
 
@@ -42,7 +42,7 @@ python -m abh --root /path/to/workspace init
 python -m abh --root /path/to/workspace doctor
 ```
 
-`init` preserves an existing recognized database and upgrades schema versions 1 or 2 to version 3 transactionally. Unknown schemas are rejected. `doctor` returns exit status 1 for failed checks and never initializes a missing database. It writes a health event to the local log. CLI output is JSON; errors go to stderr. Exit status 0 means success, 1 means blocked/error, 2 means malformed CLI usage, and 3 means waiting for human approval.
+`init` preserves an existing recognized database and upgrades schema versions 1, 2 or 3 to version 4 transactionally. Unknown schemas are rejected. `doctor` returns exit status 1 for failed checks and never initializes a missing database. It writes a health event to the local log. CLI output is JSON; errors go to stderr. Exit status 0 means success, 1 means blocked/error, 2 means malformed CLI usage, and 3 means waiting for human approval.
 
 ## Check a local policy
 
@@ -77,8 +77,23 @@ Replace `JOB_ID` with the ID from `jobs create`. An ambiguous or excluded policy
 
 See [jobs and orchestration](docs/jobs.md) for routing, retries, cancellation, leases, audit history and current limits.
 
+## Run offline agents
+
+```text
+python -m abh agents list
+python -m abh agents show scout
+python -m abh agents enqueue scout http://localhost:8080/ --program local-lab --input configs/agents/scout.example.json
+python -m abh jobs show JOB_ID
+python -m abh jobs approve JOB_ID
+python -m abh agents run-next scout
+python -m abh agents runs --job JOB_ID
+python -m abh agents handoff JOB_ID --to mapper --input configs/agents/mapper.example.json
+```
+
+Replace `JOB_ID` with the actual job ID. The policy must explicitly allow the agent's action (`review_policy` for Scout); the ambiguous lab template is deliberately blocked. `jobs show` displays the stored agent input before approval. Handoffs also wait for new approval. See [agent contracts and charters](docs/agents.md) for all five input formats, required actions and current capabilities.
+
 ## Safety and status
 
-`DRY_RUN=true` and `REQUIRE_HUMAN_APPROVAL=true` remain mandatory. Production mode and non-SQLite backends are rejected. No agent runtimes, networking, shell execution, target testing or external integrations exist yet. Dry-run dispatch rechecks the current policy and approval and reserves budget atomically. These checks are not reusable live-execution permits. Future tool adapters must bind them to the actual request and enforce transport/DNS safeguards. No real API keys belong in source or logs.
+`DRY_RUN=true` and `REQUIRE_HUMAN_APPROVAL=true` remain mandatory. Production mode and non-SQLite backends are rejected. Built-in agents perform deterministic offline processing; networking, shell execution, target testing and external integrations do not exist yet. Dispatch rechecks the current policy and approval and reserves budget atomically. These checks are not reusable live-execution permits. Future tool adapters must bind them to the actual request and enforce transport/DNS safeguards. No real API keys belong in source or logs.
 
-See [architecture](docs/architecture.md), [configuration](docs/configuration.md), [development](docs/development.md) and [Phase 2 status](docs/phase-2.md). The [Phase 0](docs/phase-0.md) and [Phase 1](docs/phase-1.md) records are retained as historical documentation.
+See [architecture](docs/architecture.md), [configuration](docs/configuration.md), [development](docs/development.md) and [Phase 3 status](docs/phase-3.md). Earlier phase records remain historical documentation.

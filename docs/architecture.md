@@ -1,4 +1,4 @@
-# Phase 2 architecture
+# Phase 3 architecture
 
 ```mermaid
 flowchart LR
@@ -23,6 +23,12 @@ flowchart LR
     Queue --> SQLite
     Queue --> Simulation[Dry-run worker simulation]
     Stop[Persistent emergency stop] --> Queue
+    Queue --> Runtime[Fixed offline agent runtime]
+    Contracts[Versioned input and output contracts] --> Runtime
+    Runtime --> Runs[Agent runs and output hashes]
+    Runs --> SQLite
+    Runs --> Handoffs[Structured handoff requests]
+    Handoffs --> Queue
 ```
 
 `abh/config.py` loads validated immutable settings. `abh/cli.py` owns command dispatch and correlation IDs. `abh/logging.py` emits only fixed event fields; it does not serialize configuration, exception text, prompts or arbitrary messages. Logs rotate at 1 MB with three backups.
@@ -36,3 +42,7 @@ There is no remote service or dashboard. Local file access is the authorization 
 `abh/jobs.py` owns Phase 2 orchestration. Schema version 3 adds `jobs`, `job_events`, `approvals`, `engine_control` and `engine_events`. Jobs have one fixed destination agent derived from their type, plus source agent, target, method, policy revision, attempt bound, correlation ID and optional idempotency key. Routing metadata is not an agent runtime.
 
 Create/review/claim/finish/cancel operations are transactional. A claim rechecks current policy, bound human approval, global concurrency and program budget before assigning a lease token. Retry or cancellation clears the lease. Expired tokens cannot complete work. Policy changes block existing jobs; a new job and new approval are required. Completion produces only a fixed simulation result, never fabricated evidence or reports.
+
+Phase 3 adds `abh/agent_contracts.py` (registry and schema validation), `abh/agents.py` (base agent protocol and five offline handlers), and `abh/agent_runtime.py` (dispatch, result validation and handoff orchestration). Schema 4 stores immutable-by-API `agent_inputs`, per-attempt `agent_runs` and `agent_handoffs`. A claim records its run atomically. Finishing a run, storing its output hash and completing its job happen in one transaction after rechecking lease and policy. Generic simulation workers cannot consume agent jobs.
+
+Inputs are stored with the original job before approval and included in the enqueue fingerprint. Handoffs preserve the parent program, target and correlation ID, require a completed agent result, enforce the allowed next-agent route and create a new job that requires approval. An idempotency key and unique parent/destination constraint prevent duplicate children. Historical legacy jobs and their fingerprints remain compatible.

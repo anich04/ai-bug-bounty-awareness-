@@ -13,6 +13,7 @@ from .scope import action_is_allowed, rate_limit_allows, target_is_in_scope
 
 
 ROUTES = {
+    "review_policy": "scout", "draft_report": "reporter",
     "discover_assets": "mapper", "resolve_dns": "mapper", "probe_http": "mapper",
     "collect_urls": "crawler", "parse_javascript": "crawler", "analyze_http": "tester",
     "compare_responses": "validator", "validate_candidate": "validator",
@@ -98,6 +99,9 @@ class JobQueue:
                            (*updates.values(), row["id"]))
         updated = self._row(connection, row["id"])
         self._event(connection, updated, now, actor, "transition", row["status"], reason)
+        if row["status"] == "running" and status != "running":
+            connection.execute("UPDATE agent_runs SET status=?,reason=?,ended_at=? WHERE job_id=? AND attempt=? AND status='running'",
+                               (status, reason, now, row["id"], row["attempts"]))
         return updated
 
     @staticmethod
@@ -124,7 +128,8 @@ class JobQueue:
 
     def create(self, program_id: str, target: str, action: str, *, method: str | None = None,
                source_agent: str = "human", max_attempts: int = 3,
-               idempotency_key: str | None = None) -> dict:
+               idempotency_key: str | None = None, agent_input: dict | None = None,
+               parent_job_id: str | None = None) -> dict:
         check(action in ROUTES, "Unknown job type; no route exists")
         check(source_agent in AGENTS, "Unknown source agent")
         check(type(max_attempts) is int and 1 <= max_attempts <= 5, "max_attempts must be between 1 and 5")
@@ -133,10 +138,32 @@ class JobQueue:
         # Phase 1 display strips queries. Do not silently turn a requested job into a different request.
         check("?" not in target, "Query-bearing jobs are not supported in this phase")
         normalized = normalize_target(target).display
-        fingerprint = hashlib.sha256(json.dumps([program_id, normalized, action, method, source_agent, max_attempts], separators=(",", ":")).encode()).hexdigest()
+        input_document = None
+        if agent_input is not None:
+            from .agent_contracts import charter, validate_input
+            definition = charter(ROUTES[action])
+            check(definition.action == action and definition.method == method, "Job does not match the agent action/method contract")
+            input_document = validate_input(definition.name, agent_input)
+        check(parent_job_id is None or agent_input is not None, "Handoffs require an agent input contract")
+        if parent_job_id is not None:
+            idempotency_key = "H-" + hashlib.sha256((parent_job_id + ":" + ROUTES[action]).encode()).hexdigest()[:40]
+        fingerprint_fields = [program_id, normalized, action, method, source_agent, max_attempts]
+        if input_document is not None:
+            fingerprint_fields.append(input_document)
+        fingerprint = hashlib.sha256(json.dumps(fingerprint_fields, separators=(",", ":")).encode()).hexdigest()
         with self.database.transaction(write=True) as connection:
             now = self._now(connection)
             self._enabled(connection)
+            parent = None
+            if parent_job_id is not None:
+                from .agent_contracts import charter
+                parent = self._row(connection, parent_job_id)
+                check(parent["status"] == "succeeded" and connection.execute("SELECT 1 FROM agent_runs WHERE job_id=? AND status='succeeded' AND output_json IS NOT NULL", (parent_job_id,)).fetchone() is not None,
+                      "Handoff source must be a completed agent run")
+                check(parent["program_id"] == program_id and parent["target"] == normalized and source_agent == parent["owner"], "Handoff cannot change program, target or source identity")
+                check(ROUTES[action] in charter(parent["owner"]).next_agents, "Agent handoff route is not allowed")
+                _, reason = self._current(connection, parent, now)
+                check(reason is None, "Handoff source policy is stale or invalid")
             if idempotency_key is not None:
                 existing = connection.execute("SELECT * FROM jobs WHERE program_id=? AND idempotency_key=?", (program_id, idempotency_key)).fetchone()
                 if existing is not None:
@@ -154,6 +181,13 @@ class JobQueue:
                                 program.revision, status, reason, now, now, now, max_attempts,
                                 idempotency_key, fingerprint, str(uuid4())))
             row = self._row(connection, job_id)
+            if input_document is not None:
+                input_sha = hashlib.sha256(input_document.encode()).hexdigest()
+                connection.execute("INSERT INTO agent_inputs VALUES (?,?,?,?,?)", (job_id, ROUTES[action], 1, input_document, input_sha))
+            if parent is not None:
+                connection.execute("UPDATE jobs SET correlation_id=? WHERE id=?", (parent["correlation_id"], job_id))
+                connection.execute("INSERT INTO agent_handoffs VALUES (?,?,?,?,?,?)", (parent_job_id, job_id, source_agent, ROUTES[action], now, parent["correlation_id"]))
+                row = self._row(connection, job_id)
             self._event(connection, row, now, source_agent, "created", None, reason)
             return self._public(row)
 
@@ -192,7 +226,7 @@ class JobQueue:
             now = self._now(connection)
             return self._recover(connection, now)
 
-    def claim(self, owner: str, worker: str, *, lease_seconds: int = 30) -> dict | None:
+    def claim(self, owner: str, worker: str, *, lease_seconds: int = 30, agent_mode: bool = False) -> dict | None:
         check(owner in set(ROUTES.values()), "No worker route exists for that owner")
         identifier(worker)
         check(type(lease_seconds) is int and 5 <= lease_seconds <= 3600, "Lease must be between 5 and 3600 seconds")
@@ -204,7 +238,7 @@ class JobQueue:
             limit = connection.execute("SELECT concurrency_limit FROM engine_control WHERE id=1").fetchone()[0]
             if running >= limit:
                 return None
-            candidates = connection.execute("SELECT * FROM jobs WHERE owner=? AND status IN ('queued','retry_wait') AND available_at<=? ORDER BY created_at,id", (owner, now)).fetchall()
+            candidates = connection.execute("SELECT * FROM jobs WHERE owner=? AND status IN ('queued','retry_wait') AND available_at<=? AND EXISTS(SELECT 1 FROM agent_inputs WHERE job_id=jobs.id)=? ORDER BY created_at,id", (owner, now, int(agent_mode))).fetchall()
             for row in candidates:
                 program, reason = self._current(connection, row, now)
                 if reason is None and row["approval_revision"] != row["policy_revision"]:
@@ -226,6 +260,10 @@ class JobQueue:
                 claimed = self._move(connection, row, "running", "dry_run_claimed", now, worker,
                                      attempts=row["attempts"] + 1, worker=worker, lease_token=uuid4().hex,
                                      lease_until=now + lease_seconds)
+                if agent_mode:
+                    item = connection.execute("SELECT * FROM agent_inputs WHERE job_id=?", (row["id"],)).fetchone()
+                    connection.execute("INSERT INTO agent_runs(id,job_id,attempt,agent,worker,input_sha,status,reason,started_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                                       ("R-" + uuid4().hex, row["id"], claimed["attempts"], owner, worker, item["input_sha"], "running", "agent_claimed", now))
                 return self._public(claimed, include_token=True)
             return None
 
@@ -257,6 +295,8 @@ class JobQueue:
             self._enabled(connection)
             row = self._row(connection, job_id)
             self._owned(row, worker, token, now)
+            check(connection.execute("SELECT 1 FROM agent_inputs WHERE job_id=?", (job_id,)).fetchone() is None,
+                  "Agent jobs must publish through AgentRuntime")
             _, reason = self._current(connection, row, now)
             if reason:
                 return self._public(self._move(connection, row, "blocked", reason, now, worker))
@@ -320,6 +360,11 @@ class JobQueue:
     def show(self, job_id: str) -> dict:
         with self.database.transaction() as connection:
             result = self._public(self._row(connection, job_id))
+            agent_input = connection.execute("SELECT * FROM agent_inputs WHERE job_id=?", (job_id,)).fetchone()
+            if agent_input is not None:
+                check(hashlib.sha256(agent_input["document_json"].encode()).hexdigest() == agent_input["input_sha"], "Agent input hash mismatch")
+                result["agent_input"] = {"agent": agent_input["agent"], "input_sha": agent_input["input_sha"],
+                                         "payload": json.loads(agent_input["document_json"])}
             result["events"] = [dict(row) for row in connection.execute("SELECT * FROM job_events WHERE job_id=? ORDER BY id", (job_id,))]
             result["approvals"] = [dict(row) for row in connection.execute("SELECT * FROM approvals WHERE job_id=? ORDER BY id", (job_id,))]
             return result

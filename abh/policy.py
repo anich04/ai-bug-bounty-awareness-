@@ -16,7 +16,7 @@ class PolicyError(ValueError):
 ACTIONS = frozenset({"discover_assets", "resolve_dns", "probe_http", "collect_urls",
                      "parse_javascript", "analyze_http", "compare_responses", "save_artifact",
                      "validate_candidate", "report_submission", "state_change",
-                     "high_volume", "sensitive_account"})
+                     "high_volume", "sensitive_account", "review_policy", "draft_report"})
 SENSITIVE_ACTIONS = frozenset({"report_submission", "state_change", "high_volume", "sensitive_account"})
 METHODS = frozenset({"GET", "HEAD", "OPTIONS", "POST", "PUT", "PATCH", "DELETE", "CONNECT", "TRACE"})
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})

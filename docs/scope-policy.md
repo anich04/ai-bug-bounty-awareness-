@@ -39,7 +39,7 @@ Only the action names in `abh.policy.ACTIONS` are accepted. HTTP collection/vali
 
 `requires_human_approval()` defaults to requiring approval for everything. Even when embedded callers evaluate a less restrictive policy, report submission, state-changing actions, high-volume actions, sensitive-account actions and non-safe HTTP methods always require review. A policy flag cannot turn off these mandatory gates. The CLI keeps the global approval setting enabled.
 
-The CLI returns `BLOCKED` (exit 1) or `WAITING_FOR_HUMAN_APPROVAL` (exit 3). Embedded checks can return `POLICY_ALLOWED` if the global approval requirement is disabled and no mandatory gate applies, but always return `execution_enabled=false`. `ok=true` means the check found no policy prohibition; it does not mean the action has been approved. No approval-grant or execution API is implemented in this phase.
+The scope-check CLI returns `BLOCKED` (exit 1) or `WAITING_FOR_HUMAN_APPROVAL` (exit 3). Embedded checks can return `POLICY_ALLOWED` if the global approval requirement is disabled and no mandatory gate applies, but always return `execution_enabled=false`. `ok=true` means the check found no policy prohibition; it does not mean the action has been approved. The later job system now records job-specific approval for offline processing only; no live-execution API exists.
 
 ## Redirects
 
