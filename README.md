@@ -42,7 +42,7 @@ python -m abh --root /path/to/workspace init
 python -m abh --root /path/to/workspace doctor
 ```
 
-`init` preserves an existing recognized database and upgrades schema versions 1 through 5 to version 6 transactionally. Unknown schemas are rejected. `doctor` returns exit status 1 for failed checks and never initializes a missing database. It writes a health event to the local log. CLI output is JSON; errors go to stderr. Exit status 0 means success, 1 means blocked/error, 2 means malformed CLI usage, and 3 means waiting for human approval.
+`init` preserves an existing recognized database and upgrades schema versions 1 through 6 to version 7 transactionally. Unknown schemas are rejected. `doctor` returns exit status 1 for failed checks and never initializes a missing database. It writes a health event to the local log. CLI output is JSON; errors go to stderr. Exit status 0 means success, 1 means blocked/error, 2 means malformed CLI usage, and 3 means waiting for human approval.
 
 ## Check a local policy
 
@@ -108,3 +108,8 @@ Use `python -m abh data --help` to import, list, inspect, trace and export local
 Use `python -m abh tools list` to inspect the initial adapters and [the tool-layer guide](docs/kali-tools.md) for enqueue, approval, dry-run processing and artifact export. This phase supports DNS A lookup plans and HTTP HEAD plans. Optional supplied captures are parsed offline and explicitly marked unverified.
 
 Phase 5's development tool layer is complete. Actual execution inside the Kali VM is NOT VERIFIED and is disabled. Phase 6, Burp integration, requires the next phase authorization.
+
+
+## Burp Community
+
+Phase 6 adds supported XML traffic import, existing issue import and byte-preserving evidence exports. See [the Burp guide](docs/phase-6.md). No live Burp connection or scanner execution is claimed.

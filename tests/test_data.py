@@ -123,13 +123,13 @@ class DataTests(unittest.TestCase):
 
     def test_v4_upgrade_keeps_program(self):
         with self.db.transaction(write=True) as c:
-            for table in ('tool_artifacts', 'tool_runs', 'tool_inputs', 'report_evidence', 'evidence_artifacts', 'artifacts', 'data_objects'):
+            for table in ('integration_artifacts', 'integration_records', 'tool_artifacts', 'tool_runs', 'tool_inputs', 'report_evidence', 'evidence_artifacts', 'artifacts', 'data_objects'):
                 c.execute('DROP TABLE '+table)
             c.execute('DELETE FROM schema_migrations WHERE version>=5')
             c.execute('PRAGMA user_version=4')
         self.db.initialize()
         self.assertEqual(ProgramStore(self.db).get(self.program.id), self.program)
-        self.assertEqual(self.db.health()['schema_version'], 6)
+        self.assertEqual(self.db.health()['schema_version'], 7)
 
     def test_cli_import_show_export(self):
         import logging

@@ -7,7 +7,7 @@ import sqlite3
 
 from .config import ConfigError, Settings
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 PHASE_ONE_SCHEMA = (
     "CREATE TABLE programs (id TEXT PRIMARY KEY, name TEXT NOT NULL, authorization_status TEXT NOT NULL, authorization_source TEXT NOT NULL, valid_until TEXT NOT NULL, revision TEXT NOT NULL)",
@@ -100,6 +100,15 @@ PHASE_FIVE_SCHEMA = (
         PRIMARY KEY(run_id,stream))""",
 )
 
+PHASE_SIX_SCHEMA = (
+    """CREATE TABLE integration_records (id TEXT PRIMARY KEY, program_id TEXT NOT NULL REFERENCES programs(id),
+        kind TEXT NOT NULL, policy_revision TEXT NOT NULL, created_at TEXT NOT NULL,
+        document_json TEXT NOT NULL, document_sha TEXT NOT NULL,
+        FOREIGN KEY(program_id,policy_revision) REFERENCES policy_revisions(program_id,revision))""",
+    """CREATE TABLE integration_artifacts (record_id TEXT NOT NULL REFERENCES integration_records(id),
+        name TEXT NOT NULL, sha256 TEXT NOT NULL REFERENCES artifacts(sha256), PRIMARY KEY(record_id,name))""",
+)
+
 class DatabaseError(RuntimeError):
     pass
 
@@ -139,7 +148,7 @@ class SQLiteDatabase:
             connection.execute("PRAGMA foreign_keys = ON")
             connection.execute("BEGIN IMMEDIATE")
             version = connection.execute("PRAGMA user_version").fetchone()[0]
-            if version not in {0, 1, 2, 3, 4, 5, SCHEMA_VERSION}:
+            if version not in {0, 1, 2, 3, 4, 5, 6, SCHEMA_VERSION}:
                 raise DatabaseError("Unsupported database schema version")
             if version == 0:
                 tables = connection.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").fetchall()
@@ -180,6 +189,12 @@ class SQLiteDatabase:
                     connection.execute(statement)
                 connection.execute("INSERT INTO schema_migrations(version, applied_at) VALUES (6, CURRENT_TIMESTAMP)")
                 connection.execute("PRAGMA user_version = 6")
+                version = 6
+            if version == 6:
+                for statement in PHASE_SIX_SCHEMA:
+                    connection.execute(statement)
+                connection.execute("INSERT INTO schema_migrations(version, applied_at) VALUES (7, CURRENT_TIMESTAMP)")
+                connection.execute("PRAGMA user_version = 7")
             connection.commit()
         except Exception:
             connection.rollback()
@@ -204,6 +219,8 @@ class SQLiteDatabase:
                 raise DatabaseError("Database evidence schema is incomplete")
             if expected >= 6 and not {"tool_inputs", "tool_runs", "tool_artifacts"} <= tables:
                 raise DatabaseError("Database tool schema is incomplete")
+            if expected >= 7 and not {"integration_records", "integration_artifacts"} <= tables:
+                raise DatabaseError("Database integration schema is incomplete")
 
     def health(self) -> dict:
         if not self.path.is_file():

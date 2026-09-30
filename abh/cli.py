@@ -8,6 +8,7 @@ import sys
 from uuid import uuid4
 
 from . import __version__
+from .burp import register as register_burp, dispatch as dispatch_burp
 from .tool_adapters import ToolError
 from .tool_cli import register as register_tools, dispatch as dispatch_tools
 from .data import DataError
@@ -31,7 +32,7 @@ def job_result(job: dict | None) -> dict:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="abh", description="AI Bug Bounty Awareness - Phase 5")
+    parser = argparse.ArgumentParser(prog="abh", description="AI Bug Bounty Awareness - Phase 6")
     parser.add_argument("--version", action="version", version=__version__)
     parser.add_argument("--root", type=Path, default=Path.cwd(), help="Workspace containing .env and local data")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -108,6 +109,7 @@ def main(argv: list[str] | None = None) -> int:
     engine_commands.add_parser("status")
     resume = engine_commands.add_parser("resume", help="Explicitly resume admission; cancelled jobs remain cancelled")
     resume.add_argument("--actor", default="local-human")
+    register_burp(commands)
     register_tools(commands)
     register_data(commands)
     args = parser.parse_args(argv)
@@ -119,7 +121,7 @@ def main(argv: list[str] | None = None) -> int:
         logger = configure_logging(settings)
         if args.command == "init":
             database.initialize()
-            result = {"ok": True, "message": "Local database initialized", "phase": 5}
+            result = {"ok": True, "message": "Local database initialized", "phase": 6}
         elif args.command == "doctor":
             health = database.health()
             result = {"ok": health["ok"], "checks": {
@@ -128,6 +130,8 @@ def main(argv: list[str] | None = None) -> int:
                 "execution_enabled": False}
             if health["ok"]:
                 result["checks"]["orchestrator"] = JobQueue(database).status()
+        elif args.command == "burp":
+            result = dispatch_burp(args, database)
         elif args.command == "tools":
             result = dispatch_tools(args, database)
             if args.tool_command in {"enqueue", "run-next"}:
@@ -199,7 +203,7 @@ def main(argv: list[str] | None = None) -> int:
         else:
             result = {"ok": True, "environment": settings.environment,
                       "dry_run": settings.dry_run, "require_human_approval": settings.require_human_approval,
-                      "database_backend": "sqlite", "log_level": settings.log_level, "phase": 5}
+                      "database_backend": "sqlite", "log_level": settings.log_level, "phase": 6}
         result["correlation_id"] = correlation_id
         record_event(logger, args.command, "ok" if result["ok"] else "failed", correlation_id)
         print(json.dumps(result, indent=2))

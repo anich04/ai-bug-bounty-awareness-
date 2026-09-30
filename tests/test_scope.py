@@ -309,7 +309,7 @@ class MigrationTests(unittest.TestCase):
                 connection.commit()
             database.initialize()
             database.initialize()
-            self.assertEqual(database.health()["schema_version"], 6)
+            self.assertEqual(database.health()["schema_version"], 7)
             with database.transaction() as connection:
                 self.assertEqual(connection.execute("SELECT applied_at FROM schema_migrations WHERE version=1").fetchone()[0], "original-timestamp")
 

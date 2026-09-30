@@ -173,11 +173,11 @@ class ToolTests(unittest.TestCase):
     def test_v5_migration_preserves_data_and_jobs(self):
         job = self.queue.create(self.program.id, 'https://example.test/app', 'probe_http', method='HEAD')
         with self.db.transaction(write=True) as c:
-            for table in ('tool_artifacts', 'tool_runs', 'tool_inputs'): c.execute('DROP TABLE '+table)
-            c.execute('DELETE FROM schema_migrations WHERE version=6'); c.execute('PRAGMA user_version=5')
+            for table in ('integration_artifacts', 'integration_records', 'tool_artifacts', 'tool_runs', 'tool_inputs'): c.execute('DROP TABLE '+table)
+            c.execute('DELETE FROM schema_migrations WHERE version>=6'); c.execute('PRAGMA user_version=5')
         self.db.initialize()
         self.assertEqual(self.queue.show(job['id'])['status'], 'waiting_human')
-        self.assertEqual(self.db.health()['schema_version'], 6)
+        self.assertEqual(self.db.health()['schema_version'], 7)
 
     def test_cli_plan_workflow(self):
         def cleanup():

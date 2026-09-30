@@ -306,14 +306,14 @@ class AgentTests(unittest.TestCase):
     def test_v3_migration_keeps_legacy_job_and_idempotency(self):
         legacy = self.queue.create(self.program.id, "https://example.test/app", "discover_assets", idempotency_key="legacy")
         with self.database.transaction(write=True) as connection:
-            for table in ("tool_artifacts", "tool_runs", "tool_inputs", "report_evidence", "evidence_artifacts", "artifacts", "data_objects", "agent_handoffs", "agent_runs", "agent_inputs"):
+            for table in ("integration_artifacts", "integration_records", "tool_artifacts", "tool_runs", "tool_inputs", "report_evidence", "evidence_artifacts", "artifacts", "data_objects", "agent_handoffs", "agent_runs", "agent_inputs"):
                 connection.execute("DROP TABLE " + table)
             connection.execute("DELETE FROM schema_migrations WHERE version>=4")
             connection.execute("PRAGMA user_version=3")
         self.database.initialize()
         duplicate = self.queue.create(self.program.id, "https://example.test/app", "discover_assets", idempotency_key="legacy")
         self.assertEqual(duplicate["id"], legacy["id"])
-        self.assertEqual(self.database.health()["schema_version"], 6)
+        self.assertEqual(self.database.health()["schema_version"], 7)
 
     def test_cli_registry_enqueue_run_and_handoff(self):
         source = self.root / "input.json"
