@@ -1,0 +1,8 @@
+{
+  "providers": {
+    "openai": {"enabled": false, "model": "", "endpoint": "https://api.openai.com/v1/responses", "max_output_tokens": 1024},
+    "claude": {"enabled": false, "model": "", "endpoint": "https://api.anthropic.com/v1/messages", "max_output_tokens": 1024},
+    "kimi": {"enabled": false, "model": "", "endpoint": "", "max_output_tokens": 1024}
+  },
+  "routes": {}
+}

@@ -113,3 +113,8 @@ Phase 5's development tool layer is complete. Actual execution inside the Kali V
 ## Burp Community
 
 Phase 6 adds supported XML traffic import, existing issue import and byte-preserving evidence exports. See [the Burp guide](docs/phase-6.md). No live Burp connection or scanner execution is claimed.
+
+
+## Model providers
+
+Phase 7 adds configurable provider contracts and offline response/usage ingestion. All providers default to disabled; no paid or live calls are made. See [model setup and limitations](docs/phase-7.md).
