@@ -118,3 +118,8 @@ Phase 6 adds supported XML traffic import, existing issue import and byte-preser
 ## Model providers
 
 Phase 7 adds configurable provider contracts and offline response/usage ingestion. All providers default to disabled; no paid or live calls are made. See [model setup and limitations](docs/phase-7.md).
+
+
+## Finding review
+
+Phase 8 adds human validation, duplicate-candidate checks, snapshot-bound report preparation and approval without submission. See [the finding workflow](docs/phase-8.md).
