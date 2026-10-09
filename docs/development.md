@@ -4,7 +4,7 @@ Use Python 3.11+ on Windows or Linux. Runtime and test suite use only the Python
 
 The source package lives in `abh/`; provider placeholder configuration is in `configs/`, tests in `tests/`, and documentation here. Generated databases and logs belong in ignored `data/` directories. Keep real secrets out of committed files.
 
-Phase 3 adds fixed built-in agent handlers, versioned input/output contracts, persisted run history and structured handoffs. Assets/findings/evidence storage, Kali/Burp interfaces, model calls, dashboard and scheduling remain excluded. Add these only after explicit authorization of their respective phases.
+The current version includes immutable evidence, offline agents, dry-run tool adapters, Burp XML imports, model contracts, human review, a local dashboard and passive HTTP candidate detection. Live tools, live model transport and scheduling remain future work. See [traffic analysis](traffic-analysis.md) for the current detection milestone and benchmark.
 
 The scope guard fails closed on unknown, excluded, expired or ambiguous authorization. Job claims bind current policy, approval, rate reservation and worker ownership in one SQLite transaction. Completion rechecks policy and the worker lease. Future adapters must bind these checks to actual requests and each redirect, including transport/DNS protections. A cached policy check is not sufficient for execution. Emergency stop persistently closes admission and cancels outstanding simulations. It cannot kill future external tools that have not been implemented.
 

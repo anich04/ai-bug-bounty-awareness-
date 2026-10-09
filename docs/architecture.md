@@ -1,4 +1,4 @@
-# Phase 5 architecture
+# Phase 9 architecture
 
 ```mermaid
 flowchart LR
@@ -35,6 +35,13 @@ flowchart LR
     Tools --> Captures[Bounded supplied-capture parsers]
     Captures --> ToolRuns[Tool runs and artifact hashes]
     ToolRuns --> SQLite
+    CLI --> Burp[Burp Community XML import]
+    CLI --> Models[Offline model contracts]
+    CLI --> Pipeline[Human finding review]
+    Pipeline --> Data
+    Dashboard[Loopback local dashboard] --> Pipeline
+    Dashboard --> Queue
+    Dashboard --> Data
 ```
 
 `abh/config.py` loads validated immutable settings. `abh/cli.py` owns command dispatch and correlation IDs. `abh/logging.py` emits only fixed event fields; it does not serialize configuration, exception text, prompts or arbitrary messages. Logs rotate at 1 MB with three backups.
@@ -43,7 +50,7 @@ flowchart LR
 
 `abh/policy.py` defines strict program contracts and DNS-free target normalization. `abh/programs.py` persists policies atomically, retains previous revisions and verifies the content hash on reads. `abh/scope.py` evaluates exclusions before inclusions, then actions, rate availability and approval requirements. Guard decisions and rate reads occur under a database write transaction so concurrent imports cannot mix revisions in a decision. Rate reservations use separate transactions and are budget operations only; actual tool authorization and dispatch do not exist yet.
 
-There is no remote service or dashboard. Local file access is the authorization boundary of this development-only version. Authentication, tamper-resistant audit storage and database secret management need later design. Content hashes identify revisions and detect inconsistent edits; they are not signatures and do not resist a malicious database owner.
+There is no remote service. Phase 9 adds a loopback-only dashboard with a per-process bearer token, host and origin checks, and restrictive static response headers. Local file access remains the authorization boundary of this development-only version. Tamper-resistant audit storage and database secret management need later design. Content hashes identify revisions and detect inconsistent edits; they are not signatures and do not resist a malicious database owner.
 
 `abh/jobs.py` owns Phase 2 orchestration. Schema version 3 adds `jobs`, `job_events`, `approvals`, `engine_control` and `engine_events`. Jobs have one fixed destination agent derived from their type, plus source agent, target, method, policy revision, attempt bound, correlation ID and optional idempotency key. Routing metadata is not an agent runtime.
 
@@ -57,3 +64,5 @@ Inputs are stored with the original job before approval and included in the enqu
 Phase 4 adds immutable-by-API data objects and content-addressed artifact BLOBs in schema 5. Provenance links preserve program, target, policy revision and parent relationships; reports reference evidence from the same candidate finding. Imports are not validation decisions.
 
 Phase 5 adds `tool_inputs`, `tool_runs` and `tool_artifacts` in schema 6. `abh/tool_adapters.py` provides fixed command plans and bounded DNS/HTTP capture parsers. `abh/tool_runtime.py` publishes dry-run results and original supplied bytes transactionally. `abh/tool_cli.py` exposes local commands. Input hashes and queue fingerprints bind captures before approval. Tool, agent and legacy worker modes are disjoint. Shared queue checks enforce current policy, approval, budgets, concurrency, leases, cancellation and emergency stop. There is no subprocess or VM transport implementation; command plans are inspectable data, not execution permits.
+
+Phase 6 adds integration records and artifact links for Burp Community XML imports. Phase 7 adds disabled-by-default model provider request contracts and offline response ingestion. Phase 8 adds snapshot-bound human review and local report approval without submission. Phase 9 adds `abh/dashboard.py` plus static dashboard assets for reviewing those records locally. The dashboard calls the same backend services used by the CLI and does not add live scanning, external notifications or report submission.

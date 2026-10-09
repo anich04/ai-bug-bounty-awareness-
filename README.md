@@ -1,6 +1,26 @@
 # AI Bug Bounty Awareness
 
-Phase 5 of an authorized security workflow engine. Controlled DNS and HTTP header adapters now use the approval-gated queue, deterministic command plans and bounded supplied-capture parsing. Tool runs preserve artifact hashes and provenance. Development remains dry-run only: no targets are contacted, commands executed, reports submitted or AI providers called.
+An authorized security workflow engine with passive traffic analysis (version 0.11). Import Burp captures and detect evidence-backed candidates for credentialed CORS, session-cookie weaknesses, exposed configuration, external redirects and server traces. Candidates include reasoning, original request/response evidence and validation steps. The project also includes strict local scope policy, approval-gated jobs, offline agent contracts, immutable evidence storage and a loopback-only dashboard. Target execution remains disabled: the analyzer inspects existing captures without contacting targets or AI providers.
+
+## Detect candidates from traffic
+
+Open **Analyze traffic** in the dashboard to import and analyze Burp XML. The program policy must explicitly allow `analyze_http`; findings remain unvalidated until human review. From the CLI:
+
+```text
+python -m abh burp import traffic.xml --program YOUR_PROGRAM
+python -m abh analysis run IMPORT_RECORD_ID
+python -m abh analysis report ANALYSIS_RECORD_ID assessment.md
+```
+
+For a separate synthetic learning workspace:
+
+```text
+python -m abh --root /path/to/training-workspace init
+python -m abh --root /path/to/training-workspace analysis demo
+python -m abh --root /path/to/training-workspace dashboard --port 8767
+```
+
+The demo detects five patterns in synthetic fixtures and rejects three controls. It makes no network requests and represents no live-target findings. See [traffic analysis and limitations](docs/traffic-analysis.md).
 
 ## Run locally
 
@@ -96,7 +116,7 @@ Replace `JOB_ID` with the actual job ID. The policy must explicitly allow the ag
 
 `DRY_RUN=true` and `REQUIRE_HUMAN_APPROVAL=true` remain mandatory. Production mode and non-SQLite backends are rejected. Built-in agents perform deterministic offline processing; networking, shell execution, target testing and external integrations do not exist yet. Dispatch rechecks the current policy and approval and reserves budget atomically. These checks are not reusable live-execution permits. Future tool adapters must bind them to the actual request and enforce transport/DNS safeguards. No real API keys belong in source or logs.
 
-See [architecture](docs/architecture.md), [configuration](docs/configuration.md), [development](docs/development.md) and [Phase 3 status](docs/phase-3.md). Earlier phase records remain historical documentation.
+See [architecture](docs/architecture.md), [configuration](docs/configuration.md), [development](docs/development.md) and [the Phase 9 dashboard record](docs/phase-9.md). Earlier phase records remain historical documentation.
 
 
 ## Data and evidence
@@ -107,7 +127,7 @@ Use `python -m abh data --help` to import, list, inspect, trace and export local
 
 Use `python -m abh tools list` to inspect the initial adapters and [the tool-layer guide](docs/kali-tools.md) for enqueue, approval, dry-run processing and artifact export. This phase supports DNS A lookup plans and HTTP HEAD plans. Optional supplied captures are parsed offline and explicitly marked unverified.
 
-Phase 5's development tool layer is complete. Actual execution inside the Kali VM is NOT VERIFIED and is disabled. Phase 6, Burp integration, requires the next phase authorization.
+Actual execution inside the Kali VM is NOT VERIFIED and is disabled. Burp Community XML import and passive local traffic analysis are available.
 
 
 ## Burp Community
@@ -123,3 +143,14 @@ Phase 7 adds configurable provider contracts and offline response/usage ingestio
 ## Finding review
 
 Phase 8 adds human validation, duplicate-candidate checks, snapshot-bound report preparation and approval without submission. See [the finding workflow](docs/phase-8.md).
+
+
+## Local dashboard
+
+Phase 9 adds a private loopback dashboard for reviewing the local workspace:
+
+```text
+python -m abh dashboard
+```
+
+Open the printed `127.0.0.1` URL. The dashboard displays programs, scope, data objects, evidence, jobs, integrations, model status, findings and reports. It can approve or reject local jobs, trigger emergency stop/resume, review candidate findings, preview original evidence and approve reports locally. It never submits a report or makes live target/model/tool requests. See [the dashboard record](docs/phase-9.md).

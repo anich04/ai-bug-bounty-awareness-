@@ -25,6 +25,14 @@ class FindingPipeline:
     def _state(self, c, finding_id):
         finding = DataStore._read(c, finding_id)
         require(finding['kind'] == 'finding', 'Expected a candidate finding')
+        chain = []
+        cursor = finding_id
+        while cursor:
+            require(len(chain) < 6, 'Invalid provenance chain')
+            item = DataStore._read(c, cursor)
+            chain.append(item)
+            cursor = item['parent_id']
+        chain = list(reversed(chain))
         evidence = [DataStore._read(c, row['id']) for row in c.execute("SELECT id FROM data_objects WHERE parent_id=? AND kind='evidence' ORDER BY id", (finding_id,))]
         for item in evidence: DataStore._artifact(c, item)
         program = ProgramStore.read(c, finding['program_id'])
@@ -34,7 +42,12 @@ class FindingPipeline:
         latest = events[-1] if events else None
         scope = target_is_in_scope(program, finding['target']).allowed
         status = latest['payload']['decision'] if latest and latest['payload']['snapshot'] == snapshot and scope else 'needs_validation'
-        return {'finding': finding, 'evidence': evidence, 'snapshot': snapshot, 'status': status,
+        detections = []
+        for row in c.execute("SELECT id FROM integration_records WHERE program_id=? AND kind='traffic_analysis' ORDER BY rowid", (finding['program_id'],)):
+            analysis = IntegrationStore.read(c, row['id'])
+            for item in analysis['payload']['results']:
+                detections.extend(candidate for candidate in item['candidates'] if candidate['finding_id'] == finding_id)
+        return {'finding': finding, 'evidence': evidence, 'provenance': chain, 'detections': detections, 'snapshot': snapshot, 'status': status,
                 'in_scope': scope, 'reviews': events, 'submission_enabled': False}
 
     def show(self, finding_id):
